@@ -1,0 +1,22 @@
+work/
+translated.ass
+__pycache__/
+*.pyc
+.tmp_frames/
+config.py
+
+# 根目录下的字幕与视频素材
+/*.ass
+/*.mp4
+/*.mkv
+/*.avi
+/*.mov
+/*.webm
+/*.flv
+/*.m4v
+/*.wmv
+/*.mpg
+/*.mpeg
+/*.ts
+/*.mts
+/*.m2ts
