@@ -1,9 +1,10 @@
 work/
-translated.ass
 __pycache__/
 *.pyc
 .tmp_frames/
 config.py
+demand.txt
+External_Resource/
 
 # 根目录下的字幕与视频素材
 /*.ass
