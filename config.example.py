@@ -18,6 +18,12 @@ class Config:
     output_path: str = "translated.ass"
     work_dir: str = "work"
 
+    # 日志
+    log_dir: str = "logs"
+    log_file: str = "pipeline.log"
+    log_level: str = "INFO"
+    log_console: bool = True
+
     # 语言
     source_lang: str = "ja"
     target_lang: str = "zh-CN"
@@ -37,6 +43,7 @@ class Config:
     # OCR / ASR 后端
     ocr_backend: str = "auto"      # auto | easyocr | rapidocr | tesseract | windows | llm
     ocr_llm_batch_size: int = 8    # llm 视觉 OCR 每张拼接图包含的字幕条数
+    ocr_workers: int = 4           # 全帧 OCR（LLM 后端）并发线程数
     asr_backend: str = "auto"      # auto | faster_whisper | whisper | none
     asr_model_size: str = "small"  # tiny/base/small/medium/large-v3
     asr_device: str = "auto"       # auto / cpu / cuda
@@ -45,9 +52,25 @@ class Config:
     ocr_confidence_threshold: float = 0.6
     asr_confidence_threshold: float = 0.5
 
-    # 字幕区域（归一化坐标：x0, y0, x1, y1）
+    # 字幕区域（已弃用：全帧检测不再依赖固定区域；仅 ocr_mode="crop" 兼容旧用法时使用）
     subtitle_region: tuple = (0.0, 0.85, 1.0, 1.0)
-    frames_per_event: int = 3
+
+    # 多类型字幕识别（全帧检测）
+    ocr_mode: str = "full_frame"          # full_frame=全帧检测；crop=兼容旧用法
+    frame_sample_strategy: str = "union"  # union=事件首/中/尾采样点并集；midpoint=仅中点
+    frames_per_event: int = 3             # 每事件采样密度
+    asr_similarity_threshold: float = 0.6 # 文本与 ASR 相似度阈值
+    text_track_gap_ms: int = 1500         # 相同文本拆分时间轨道的间隔
+    use_ass_type_hint: bool = False       # Style/Layer/Effect 弱先验（默认关）
+
+    # 样式识别一一对应
+    use_style_match: bool = True          # 总开关
+    style_match_weight: float = 0.8       # 样式相似度的得分权重
+    style_similarity_min: float = 0.35    # 低于该值不给予样式加分
+    style_color_weight: float = 1.0       # 主色权重
+    style_outline_weight: float = 1.0     # 描边色权重
+    style_bold_weight: float = 0.5        # 粗体权重（弱）
+    style_position_weight: float = 0.3    # 位置权重（弱，仅作 tiebreak）
 
     # 对齐 / 分组
     gap_threshold_ms: int = 1200

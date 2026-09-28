@@ -60,3 +60,25 @@ def extract_frames_at_times(
             paths.append(fp)
     return paths
 
+
+def extract_frames_at_times_map(
+    video_path: str | Path,
+    times_ms: list[int],
+    out_dir: str | Path,
+    prefix: str = "frame",
+    ffmpeg: Ffmpeg | None = None,
+) -> list[tuple[int, Path]]:
+    """与 extract_frames_at_times 相同，但返回 (time_ms, path) 以便时间对齐。"""
+    ffmpeg = ffmpeg or Ffmpeg()
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    result: list[tuple[int, Path]] = []
+    for i, ms in enumerate(times_ms):
+        fp = out_dir / f"{prefix}_{i:04d}.png"
+        ffmpeg.run_checked(
+            ["-y", "-ss", f"{ms / 1000.0:.3f}", "-i", str(video_path), "-frames:v", "1", str(fp)]
+        )
+        if fp.exists():
+            result.append((ms, fp))
+    return result
+

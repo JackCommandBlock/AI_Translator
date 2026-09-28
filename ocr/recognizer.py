@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import logging
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +11,11 @@ from typing import Optional
 
 import cv2
 import numpy as np
+
+from translate.client import chat_completion
+
+
+logger = logging.getLogger("pipeline.ocr.recognizer")
 
 
 @dataclass
@@ -19,11 +25,39 @@ class OCRResult:
     backend: str
 
 
+@dataclass
+class DetectedBlock:
+    """本地 OCR 检测出的单个文本框。"""
+    text: str
+    confidence: Optional[float] = None
+    box: Optional[list] = None  # 四点坐标 [[x,y],...]，或 None（无坐标）
+
+
+def _normalize_box(box) -> Optional[list]:
+    """把 numpy 坐标数组统一为 [[x,y],...] 的普通列表。"""
+    if box is None:
+        return None
+    try:
+        pts = []
+        for p in box:
+            pts.append([float(p[0]), float(p[1])])
+        return pts
+    except Exception:
+        return None
+
+
 class OCRBackend:
     name = "base"
 
     def recognize(self, image: np.ndarray) -> OCRResult:
         raise NotImplementedError
+
+    def recognize_blocks(self, image: np.ndarray) -> list[DetectedBlock]:
+        """默认把整张图当作单个文本块；能返回坐标的后端应覆盖此方法。"""
+        r = self.recognize(image)
+        if not r.text or not r.text.strip():
+            return []
+        return [DetectedBlock(text=r.text.strip(), confidence=r.confidence, box=None)]
 
 
 class RapidOCRBackend(OCRBackend):
@@ -47,6 +81,25 @@ class RapidOCRBackend(OCRBackend):
         text = "".join(lines)
         conf = float(np.mean(scores)) if scores else None
         return OCRResult(text=text, confidence=conf, backend=self.name)
+
+    def recognize_blocks(self, image: np.ndarray) -> list[DetectedBlock]:
+        result, _ = self._engine(image)
+        blocks: list[DetectedBlock] = []
+        if result:
+            for box, text, score in result:
+                try:
+                    conf = float(score)
+                except (TypeError, ValueError):
+                    conf = None
+                if str(text).strip():
+                    blocks.append(
+                        DetectedBlock(
+                            text=str(text).strip(),
+                            confidence=conf,
+                            box=_normalize_box(box),
+                        )
+                    )
+        return blocks
 
 
 class EasyOCRBackend(OCRBackend):
@@ -74,6 +127,21 @@ class EasyOCRBackend(OCRBackend):
         text = "".join(lines)
         conf = float(np.mean(scores)) if scores else None
         return OCRResult(text=text, confidence=conf, backend=self.name)
+
+    def recognize_blocks(self, image: np.ndarray) -> list[DetectedBlock]:
+        results = self._reader.readtext(image, detail=1, paragraph=False)
+        blocks: list[DetectedBlock] = []
+        for item in results:
+            bbox, text, score = item[0], str(item[1]), item[2]
+            try:
+                conf = float(score)
+            except (TypeError, ValueError):
+                conf = None
+            if text.strip():
+                blocks.append(
+                    DetectedBlock(text=text.strip(), confidence=conf, box=_normalize_box(bbox))
+                )
+        return blocks
 
 
 class TesseractBackend(OCRBackend):
@@ -124,11 +192,13 @@ class WindowsOCRBackend(OCRBackend):
         tmp = Path(tempfile.mkdtemp()) / "ocr.png"
         cv2.imwrite(str(tmp), image)
         script = _WINDOWS_OCR_PS.replace("__IMAGE__", str(tmp).replace("'", "''")).replace("__LANG__", self.lang)
+        logger.debug("调用 Windows OCR：image=%s lang=%s", tmp, self.lang)
         proc = subprocess.run(
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
             capture_output=True, text=True, check=False,
         )
         if proc.returncode != 0:
+            logger.error("Windows OCR 失败：%s", proc.stderr.strip())
             raise RuntimeError(f"Windows OCR 失败: {proc.stderr.strip()}")
         text = proc.stdout.strip()
         return OCRResult(text=text, confidence=None, backend=self.name)
@@ -149,7 +219,8 @@ class LLMVisionBackend(OCRBackend):
             raise RuntimeError("图像编码失败")
         b64 = base64.b64encode(buf.tobytes()).decode("ascii")
         data_url = f"data:image/png;base64,{b64}"
-        resp = self.client.chat.completions.create(
+        resp = chat_completion(
+            self.client,
             model=self.model,
             messages=[
                 {
@@ -220,6 +291,7 @@ def get_available_backend(config=None) -> str:
 def create_backend(name: str, config=None):
     """按名称创建 OCR 后端。"""
     source_lang = getattr(config, "source_lang", "ja")
+    logger.info("创建 OCR 后端：%s", name)
     if name == "easyocr":
         gpu = True
         try:

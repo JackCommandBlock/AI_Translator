@@ -2,16 +2,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from typing import Any
 
+from .client import build_client, chat_completion
 
-def build_client(config):
-    """按 gemini_example.py 的方式创建 OpenAI 兼容客户端。"""
-    from openai import OpenAI
 
-    return OpenAI(base_url=config.api_base_url, api_key=config.api_key)
+logger = logging.getLogger("pipeline.translate")
 
 
 def _extract_json(text: str) -> Any:
@@ -47,7 +46,8 @@ class Translator:
         self.temperature = config.llm_temperature
 
     def chat(self, messages: list[dict], temperature: float | None = None) -> str:
-        resp = self.client.chat.completions.create(
+        resp = chat_completion(
+            self.client,
             model=self.model,
             messages=messages,
             temperature=self.temperature if temperature is None else temperature,
@@ -65,6 +65,12 @@ class Translator:
         ctx_by_id = {c["id"]: c for c in context} if context else {}
         for i in range(0, len(entries), bs):
             chunk = entries[i : i + bs]
+            logger.info(
+                "批量处理第 %d/%d 批，条数 %d",
+                i // bs + 1,
+                (len(entries) + bs - 1) // bs,
+                len(chunk),
+            )
             # 为当前批次挑选窗口内的上下文，避免把整部片子都塞进每次请求
             ids = [e["id"] for e in chunk]
             lo, hi = min(ids), max(ids)
@@ -74,7 +80,11 @@ class Translator:
                 {"role": "system", "content": "你是专业的字幕处理助手，只输出要求的 JSON。"},
                 {"role": "user", "content": user},
             ]
-            data = self.chat_json(messages)
+            try:
+                data = self.chat_json(messages)
+            except Exception:
+                logger.exception("批量处理失败，批次条目 %s", ids)
+                raise
             if isinstance(data, dict):
                 data = data.get("items") or data.get("results") or [data]
             if not isinstance(data, list):
@@ -89,6 +99,7 @@ class Translator:
         from .prompt import translation_user_prompt
         from .glossary import load_glossary
 
+        logger.info("开始翻译，待翻译条目 %d", len(entries))
         glossary = load_glossary(self.config.glossary_path)
 
         def prompt_fn(chunk, ctx):
@@ -96,15 +107,30 @@ class Translator:
                 self.config.source_lang, self.config.target_lang, chunk, glossary, ctx
             )
 
-        return self._batch(entries, prompt_fn, context)
+        # 按内容类型分组，同类型内取时间相邻事件做上下文，避免标题与台词混在同一窗口
+        groups: dict[str, list] = {}
+        for e in entries:
+            groups.setdefault(e.get("type", "dialogue"), []).append(e)
+
+        result: dict[int, str] = {}
+        for typ, group in groups.items():
+            logger.info("翻译类型 %s：%d 条", typ, len(group))
+            typed_context = [c for c in context if c.get("type", "dialogue") == typ]
+            result.update(self._batch(group, prompt_fn, typed_context))
+        logger.info("翻译完成，成功 %d/%d 条", len(result), len(entries))
+        return result
 
     def correct(self, entries, context) -> dict[int, str]:
         from .prompt import correction_user_prompt
 
+        logger.info("开始原文纠错，条目 %d", len(entries))
+
         def prompt_fn(chunk, ctx):
             return correction_user_prompt(self.config.source_lang, chunk, ctx)
 
-        return self._batch(entries, prompt_fn, context)
+        result = self._batch(entries, prompt_fn, context)
+        logger.info("原文纠错完成，成功 %d/%d 条", len(result), len(entries))
+        return result
 
     def resolve_conflict(self, ocr_text: str, asr_text: str, context) -> str:
         from .prompt import conflict_user_prompt

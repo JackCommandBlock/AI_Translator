@@ -43,6 +43,7 @@ def check(events, translations: dict[int, str], originals: dict[int, dict], conf
     max_lines = getattr(config, "max_lines", 2)
     ocr_th = getattr(config, "ocr_confidence_threshold", 0.6)
     asr_th = getattr(config, "asr_confidence_threshold", 0.5)
+    style_min = getattr(config, "style_similarity_min", 0.35)
     n_translated = 0
 
     if len(translations) != len(events):
@@ -77,19 +78,47 @@ def check(events, translations: dict[int, str], originals: dict[int, dict], conf
         if original:
             conf = original.get("confidence")
             source = original.get("source", "")
+            typ = original.get("type", "dialogue")
             if conf is not None and conf < (ocr_th if source != "asr" else asr_th):
                 report.add(tid, "low_confidence",
-                           f"{source} 置信度低（{conf:.2f}）", "warning")
+                           f"{source}/{typ} 置信度低（{conf:.2f}）", "warning")
             if original.get("conflict"):
                 report.add(tid, "ocr_asr_conflict", "OCR 与 ASR 结果存在冲突", "warning")
+            if (
+                original.get("style_similarity") is not None
+                and original.get("style_similarity") < style_min
+            ):
+                report.add(
+                    tid,
+                    "style_mismatch",
+                    f"样式置信度低（{original.get('style_similarity'):.2f}）",
+                    "warning",
+                )
         else:
             report.add(tid, "no_original", "未能识别出原文，无法翻译", "warning")
+
+    type_counts: dict[str, int] = {}
+    for ev in events:
+        rec = originals.get(ev.id, {})
+        t = rec.get("type", "dialogue")
+        type_counts[t] = type_counts.get(t, 0) + 1
+
+    style_sims = [
+        rec.get("style_similarity")
+        for rec in originals.values()
+        if rec.get("style_similarity") is not None
+    ]
 
     report.stats = {
         "total_events": len(events),
         "translated": n_translated,
         "issue_count": len(report.issues),
         "error_count": sum(1 for i in report.issues if i.severity == "error"),
+        "type_counts": type_counts,
+        "style_matched": len(style_sims),
+        "style_similarity_mean": (
+            round(sum(style_sims) / len(style_sims), 3) if style_sims else None
+        ),
     }
     return report
 

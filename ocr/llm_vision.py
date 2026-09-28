@@ -6,13 +6,24 @@
 from __future__ import annotations
 
 import base64
-import json
-import re
+import logging
 
 import cv2
 import numpy as np
 
+from translate.client import chat_completion
+
 from .recognizer import OCRResult
+from .scene_text import (
+    SCENE_TEXT_PROMPT,
+    TextBlock,
+    _parse_json,
+    parse_blocks,
+    resize_long_edge,
+)
+
+
+logger = logging.getLogger("pipeline.ocr.llm_vision")
 
 
 def _to_png_b64(image: np.ndarray) -> str:
@@ -38,19 +49,6 @@ def _stack_images(images: list[np.ndarray]) -> np.ndarray:
     return np.vstack(parts)
 
 
-def _parse_json(text: str):
-    text = text.strip()
-    text = re.sub(r"^```(?:json)?\s*", "", text)
-    text = re.sub(r"\s*```$", "", text)
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        m = re.search(r"\[.*\]", text, re.DOTALL)
-        if m:
-            return json.loads(m.group(0))
-        raise
-
-
 class LLMVisionOCR:
     """把一组字幕截图拼接后交给多模态模型批量识别。"""
 
@@ -73,7 +71,8 @@ class LLMVisionOCR:
                 '只输出 JSON 数组，格式为 [{"i": 0, "text": "字幕原文"}, ...]，'
                 "没有文字的条目 text 为空字符串。不要解释，不要加代码块标记。"
             )
-            resp = self.client.chat.completions.create(
+            resp = chat_completion(
+                self.client,
                 model=self.model,
                 messages=[
                     {
@@ -99,4 +98,26 @@ class LLMVisionOCR:
                             backend="llm",
                         )
         return results
+
+    def ocr_full_frame(self, image: np.ndarray) -> list[TextBlock]:
+        """全帧多文本识别：返回画面中所有文字块及其内容类型。"""
+        img = resize_long_edge(image, 1280)
+        b64 = _to_png_b64(img)
+        resp = chat_completion(
+            self.client,
+            model=self.model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": SCENE_TEXT_PROMPT},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{b64}"},
+                        },
+                    ],
+                }
+            ],
+        )
+        return parse_blocks(resp.choices[0].message.content or "")
 

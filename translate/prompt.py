@@ -6,6 +6,23 @@ from .glossary import format_glossary
 NL = "\u23ce"  # 换行占位符
 
 
+TYPE_HINT = {
+    "dialogue": "主台词，口语自然",
+    "title":    "标题/专名，简洁，不加标点",
+    "note":     "辅助说明，忠实直译",
+    "sign":     "画面内文字，忠实直译",
+    "lyrics":   "歌词，可保留韵律",
+}
+
+
+def _entries_type(entries: list[dict]) -> str:
+    for e in entries:
+        t = e.get("type", "dialogue")
+        if t:
+            return t
+    return "dialogue"
+
+
 def system_prompt(target_lang_name: str) -> str:
     return (
         "你是一名专业的影视字幕翻译。你输出的内容会直接写入 ASS 字幕文件，"
@@ -35,6 +52,10 @@ def translation_user_prompt(
     lines.append("4. 保持人物称呼、专有名词、术语前后统一，结合上下文翻译。")
     lines.append("5. 控制译文长度，单条字幕尽量不超过两行，避免过长。")
     lines.append("6. 口语化、自然，符合目标语言习惯。")
+    entry_type = _entries_type(entries)
+    hint = TYPE_HINT.get(entry_type, "")
+    if hint:
+        lines.append(f"7. 本批内容类型为 {entry_type}（{hint}），请按该类型特点翻译。")
     if glossary:
         lines.append("")
         lines.append("术语表（必须优先遵守）：")
@@ -47,7 +68,7 @@ def translation_user_prompt(
     lines.append("")
     lines.append("待翻译条目：")
     for e in entries:
-        lines.append(f"id={e['id']} | {e.get('name','')} | {e['text']}")
+        lines.append(f"id={e['id']} | {e.get('type','dialogue')} | {e.get('name','')} | {e['text']}")
     return "\n".join(lines)
 
 

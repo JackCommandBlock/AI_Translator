@@ -2,9 +2,14 @@
 from __future__ import annotations
 
 import math
+import logging
 import shutil
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+
+logger = logging.getLogger("pipeline.asr")
 
 
 @dataclass
@@ -51,9 +56,11 @@ class ASREngine:
     def _load(self):
         try:
             import faster_whisper
+            logger.info("使用 faster-whisper，模型 %s（首次使用会下载权重）", self.model_size)
             self._load_faster(self.device)
             self._backend = "faster_whisper"
         except ImportError:
+            logger.info("faster-whisper 不可用，回退到 openai-whisper")
             import whisper
             self._model = whisper.load_model(self.model_size)
             self._backend = "whisper"
@@ -66,20 +73,28 @@ class ASREngine:
         )
 
     def transcribe(self, audio_path: str | Path) -> list[ASRSegment]:
+        start = time.perf_counter()
+        logger.info("开始语音识别：%s", audio_path)
         if self._model is None:
             self._load()
         audio_path = str(audio_path)
         if self._backend == "faster_whisper":
             try:
-                return self._transcribe_faster(audio_path)
+                result = self._transcribe_faster(audio_path)
             except RuntimeError as exc:
                 if self.device != "cpu" and ("cuda" in str(exc).lower() or "cublas" in str(exc).lower()):
                     # GPU 运行库不匹配（如 cuBLAS 缺失），回退 CPU
+                    logger.warning("GPU 识别失败，回退 CPU：%s", exc)
                     self.device = "cpu"
                     self._load_faster("cpu")
-                    return self._transcribe_faster(audio_path)
-                raise
-        return self._transcribe_openai(audio_path)
+                    result = self._transcribe_faster(audio_path)
+                else:
+                    logger.exception("语音识别失败：%s", audio_path)
+                    raise
+        else:
+            result = self._transcribe_openai(audio_path)
+        logger.info("语音识别完成，片段 %d，耗时 %.1fs", len(result), time.perf_counter() - start)
+        return result
 
     def _transcribe_faster(self, audio_path: str) -> list[ASRSegment]:
         segments_iter, _info = self._model.transcribe(

@@ -7,7 +7,9 @@
 ## 功能
 
 - 解析 ASS，保留 Script Info / Styles / Format / 特效标签与时间轴。
-- OCR：从视频画面底部字幕区域抽取代表帧，多帧投票得到原文与置信度。
+- OCR：默认全帧多文本识别，把画面中所有文字按内容类型（对白/标题/说明/招牌/歌词）
+  拆成文本轨道，再用时间覆盖与 ASR 相似度匹配回事件；兼容旧的底部裁剪模式
+  （`ocr_mode="crop"`）。
 - ASR：整段视频语音识别，按词级时间戳对齐回每个 ASS 事件。
 - 原文判定：OCR 优先，OCR 失败用 ASR，两者冲突交给大模型裁决。
 - 原文纠错：大模型结合上下文修正 OCR/ASR 错字。
@@ -16,6 +18,8 @@
 - ASS 特效标签与 `\N` 换行保留。
 - 译文长度检查与自动压缩。
 - 自动质量检查 + 人工审核清单 `work/review.md`。
+- 统一日志：记录流水线运行步骤、大模型网络请求（模型 / 消息数 / 耗时 / token
+  用量）、ffmpeg/ASR 子流程以及异常堆栈，同时输出到控制台与 `logs/pipeline.log`。
 
 ## 环境
 
@@ -46,6 +50,18 @@ python main.py --refresh       # 忽略缓存重新提取
 `gemini_example.py` 保持一致，也可用环境变量 `AI_TRANSLATOR_API_KEY`
 覆盖。
 
+## 日志
+
+日志默认写入 `logs/pipeline.log`，并同时打印到控制台。可通过 `config.py` 调整：
+
+- `log_dir`：日志目录，默认 `logs`。
+- `log_file`：日志文件名，默认 `pipeline.log`。
+- `log_level`：`DEBUG` / `INFO` / `WARNING` / `ERROR`，默认 `INFO`。
+- `log_console`：是否同时输出到控制台，默认 `True`。
+
+大模型请求会记录模型、消息数量、耗时与 token 用量；`DEBUG` 级别还会记录消息摘要
+与响应前 500 字符。日志中的 API Key、token 等敏感字段会被自动脱敏。
+
 ## 目录结构
 
 ```text
@@ -59,6 +75,7 @@ align/            时间轴匹配、字幕分组
 translate/        术语表、提示词、大模型翻译
 quality/          质量检查、审核清单
 output/           最终 ASS 导出
+logging_utils.py  日志配置与脱敏
 glossary.json     术语表
 ```
 
@@ -66,8 +83,14 @@ glossary.json     术语表
 
 - `audio.wav`：抽取的 16kHz 单声道音频。
 - `frames/`：按事件抽取的代表帧。
-- `ocr.json` / `asr.json`：识别缓存（`--refresh` 可重新生成）。
+- `frames_full/`：全帧检测抽取的采样帧。
+- `frame_ocr.json` / `text_timeline.json` / `matched.json`：全帧识别与匹配缓存。
+- `ocr.json` / `asr.json`：旧裁剪模式与语音识别缓存（`--refresh` 可重新生成）。
 - `original.json` / `original_corrected.json`：判定与纠错后的原文。
 - `translated.json`：译文。
 - `quality_report.json` / `review.md`：质量报告与人工审核清单。
+
+## 运行时日志（logs/）
+
+- `pipeline.log`：流水线步骤、网络请求、错误堆栈（自动滚动，保留最近 3 个备份）。
 

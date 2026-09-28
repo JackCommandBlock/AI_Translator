@@ -13,6 +13,7 @@ def generate_review(report: QualityReport, events, translations: dict[int, str],
         f"- 事件总数：{report.stats.get('total_events', 0)}",
         f"- 已翻译：{report.stats.get('translated', 0)}",
         f"- 问题数：{report.stats.get('issue_count', 0)}（其中错误 {report.stats.get('error_count', 0)}）",
+        f"- 样式匹配：{report.stats.get('style_matched', 0)} 条（平均置信度 {report.stats.get('style_similarity_mean')}）",
         "",
         "## 待审核项目",
         "",
@@ -30,6 +31,11 @@ def generate_review(report: QualityReport, events, translations: dict[int, str],
         lines.append(f"- 问题：{issue.message}")
         if original:
             lines.append(f"- 原文（{original.get('source','?')}）：{original.get('text','')}")
+            lines.append(f"- 类型：{original.get('type','?')}")
+            if original.get("ass_style"):
+                lines.append(f"- 样式：{original.get('ass_style')}")
+            if original.get("style_similarity") is not None:
+                lines.append(f"- 样式置信度：{original.get('style_similarity'):.3f}")
         if issue.event_id is not None:
             lines.append(f"- 译文：{translations.get(issue.event_id, '')}")
         lines.append("")
