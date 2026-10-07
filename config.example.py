@@ -38,7 +38,25 @@ class Config:
     enable_asr: bool = True
     enable_translate: bool = True
     enable_review: bool = True
+    enable_positioning: bool = True  # 用 LLM 评分给译文字幕判别位置
     force_refresh: bool = False  # 忽略缓存，重新提取 / 识别
+
+    # 字幕定位（enable_positioning=True 时生效）
+    positioning_force_refresh: bool = False
+    positioning_long_edge: int = 1280     # LLM 全帧 OCR 的长边缩放，用于坐标映射
+    positioning_gap_min: float = 12.0     # 译文底边距原字幕顶边的最小间距
+    positioning_gap_default: float = 36.0 # 默认间距
+    positioning_gap_max: float = 80.0     # 最大间距
+    positioning_top_margin: float = 24.0  # 屏幕上边保留
+    positioning_side_margin: float = 48.0 # 屏幕左右保留
+    positioning_x_deviation: float = 180.0# 原字幕横坐标偏离中心超过此值才调整
+    positioning_reuse_bonus: float = 0.3   # 复用历史位置的评分加成
+    positioning_max_candidates: int = 6
+    positioning_history_cap: int = 8
+    positioning_use_binary_search: bool = True  # 用二分查找确定纵向位置
+    positioning_search_iterations: int = 9   # 二分查找迭代次数（完整高度范围）
+    positioning_reuse_tolerance: float = 48.0  # 历史位置复用的距离容忍度
+    positioning_workers: int = 4   # 字幕定位并发线程数
 
     # OCR / ASR 后端
     ocr_backend: str = "auto"      # auto | easyocr | rapidocr | tesseract | windows | llm

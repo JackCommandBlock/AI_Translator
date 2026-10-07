@@ -704,6 +704,14 @@ def build_pipeline(cfg: Config):
     else:
         translations = {ev.id: "" for ev in ass.events}
 
+    # 可选：用 LLM 评分给译文字幕判别位置
+    if getattr(cfg, "enable_positioning", False):
+        from positioning.positioner import position_subtitles, apply_positions
+
+        position_tags = position_subtitles(cfg, ass, work, translations)
+        translations = apply_positions(translations, position_tags)
+        log(f"字幕定位完成：{sum(1 for t in position_tags.values() if t)} 条移动")
+
     # 写回最终 ASS
     from output.exporter import export
     export(ass, translations, cfg.output_path)
@@ -771,6 +779,7 @@ def parse_args(argv):
     p.add_argument("--no-ocr", action="store_true", help="关闭 OCR")
     p.add_argument("--no-asr", action="store_true", help="关闭语音识别")
     p.add_argument("--no-translate", action="store_true", help="关闭翻译（仅识别原文）")
+    p.add_argument("--positioning", action="store_true", help="用 LLM 评分给译文字幕判别位置")
     p.add_argument("--refresh", action="store_true", help="忽略缓存重新提取")
     return p.parse_args(argv)
 
@@ -796,6 +805,8 @@ def main(argv=None) -> int:
         cfg.enable_asr = False
     if args.no_translate:
         cfg.enable_translate = False
+    if args.positioning:
+        cfg.enable_positioning = True
     if args.refresh:
         cfg.force_refresh = True
 

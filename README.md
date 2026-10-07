@@ -17,6 +17,8 @@
 - 批量上下文翻译：一次翻译多条，返回结构化 JSON，再按 Event ID 写回。
 - ASS 特效标签与 `\N` 换行保留。
 - 译文长度检查与自动压缩。
+- 字幕定位（可选）：根据原字幕包围盒生成候选位置，用 ffmpeg 模拟摆放后交多模态
+  大模型评分，选择最优 `\pos` 写回译文。
 - 自动质量检查 + 人工审核清单 `work/review.md`。
 - 统一日志：记录流水线运行步骤、大模型网络请求（模型 / 消息数 / 耗时 / token
   用量）、ffmpeg/ASR 子流程以及异常堆栈，同时输出到控制台与 `logs/pipeline.log`。
@@ -43,6 +45,7 @@ python main.py
 python main.py --ass sample.ass --video sample.mp4 --out translated.ass
 python main.py --no-asr        # 关闭语音识别
 python main.py --no-translate  # 仅识别原文，不翻译
+python main.py --positioning    # 翻译后为译文字幕判别位置（LLM 评分）
 python main.py --refresh       # 忽略缓存重新提取
 ```
 
@@ -74,6 +77,7 @@ asr/              Whisper/faster-whisper 语音识别
 align/            时间轴匹配、字幕分组
 translate/        术语表、提示词、大模型翻译
 quality/          质量检查、审核清单
+positioning/      字幕定位（候选生成 + ffmpeg 渲染 + LLM 评分）
 output/           最终 ASS 导出
 logging_utils.py  日志配置与脱敏
 glossary.json     术语表
