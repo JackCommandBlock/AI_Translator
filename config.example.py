@@ -49,7 +49,6 @@ class Config:
     positioning_gap_max: float = 80.0     # 最大间距
     positioning_top_margin: float = 24.0  # 屏幕上边保留
     positioning_side_margin: float = 48.0 # 屏幕左右保留
-    positioning_x_deviation: float = 180.0# 原字幕横坐标偏离中心超过此值才调整
     positioning_reuse_bonus: float = 0.3   # 复用历史位置的评分加成
     positioning_max_candidates: int = 6
     positioning_history_cap: int = 8
@@ -99,6 +98,8 @@ class Config:
     max_chars_per_line: int = 42
     max_lines: int = 2
     glossary_path: str = "glossary.json"
+    glossary_dir: str = "glossaries"   # 多译名表目录；仅 glossary_name 非空时使用
+    glossary_name: str = ""            # 从 glossary_dir 中选择译名表，如 "parako" -> glossaries/parako.json；留空则使用 glossary_path
 
     # 其他
     ffmpeg_bin: str = "ffmpeg"
@@ -139,4 +140,17 @@ class Config:
 
     def resolve(self, path: str) -> Path:
         return Path(path)
+
+    def glossary_file(self) -> Path:
+        """返回实际生效的术语表文件路径。
+
+        优先使用 ``glossary_name`` 在 ``glossary_dir`` 下按名称查找；
+        未指定时回退到 ``glossary_path``。
+        """
+        name = getattr(self, "glossary_name", "")
+        if name:
+            if not name.endswith(".json"):
+                name += ".json"
+            return Path(getattr(self, "glossary_dir", "glossaries")) / name
+        return Path(getattr(self, "glossary_path", "glossary.json"))
 

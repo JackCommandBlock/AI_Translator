@@ -5,10 +5,7 @@ import json
 from pathlib import Path
 
 
-def load_glossary(path: str | Path) -> dict[str, str]:
-    p = Path(path)
-    if not p.exists():
-        return {}
+def _read_glossary_file(p: Path) -> dict[str, str]:
     data = json.loads(p.read_text(encoding="utf-8"))
     if isinstance(data, list):
         out = {}
@@ -20,6 +17,23 @@ def load_glossary(path: str | Path) -> dict[str, str]:
                     out[str(src)] = str(dst)
         return out
     return {str(k): str(v) for k, v in data.items()}
+
+
+def load_glossary(path: str | Path) -> dict[str, str]:
+    """加载术语表。
+
+    ``path`` 既可以是单个 JSON 文件，也可以是包含多个 ``*.json`` 的目录；
+    目录模式下会按文件名排序后合并所有表。
+    """
+    p = Path(path)
+    if not p.exists():
+        return {}
+    if p.is_dir():
+        out: dict[str, str] = {}
+        for fp in sorted(p.glob("*.json")):
+            out.update(_read_glossary_file(fp))
+        return out
+    return _read_glossary_file(p)
 
 
 def format_glossary(glossary: dict[str, str], limit: int = 200) -> str:

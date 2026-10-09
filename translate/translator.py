@@ -100,7 +100,11 @@ class Translator:
         from .glossary import load_glossary
 
         logger.info("开始翻译，待翻译条目 %d", len(entries))
-        glossary = load_glossary(self.config.glossary_path)
+        if hasattr(self.config, "glossary_file"):
+            glossary_path = self.config.glossary_file()
+        else:
+            glossary_path = self.config.glossary_path
+        glossary = load_glossary(glossary_path)
 
         def prompt_fn(chunk, ctx):
             return translation_user_prompt(

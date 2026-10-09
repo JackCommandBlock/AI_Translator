@@ -11,7 +11,8 @@
 4. 在满足“位于原字幕上方、不越界”的前提下，优先复用之前已使用过的历史锚点。
 5. 把最终锚点写成 ``{\\an2\\pos(x,y)}`` 插入译文 Text 头部。
 
-说明：这里不修改原文 ASS 的样式与时间轴，只给译文追加 override 标签。
+说明：横坐标固定使用字幕样式的默认横坐标（画面水平居中），只识别纵向位置；
+这里不修改原文 ASS 的样式与时间轴，只给译文追加 override 标签。
 """
 from __future__ import annotations
 
@@ -68,7 +69,7 @@ class BBox:
 class Candidate:
     x: float
     y: float
-    origin: str = "ideal"  # ideal | recenter | reuse | below
+    origin: str = "ideal"  # ideal | reuse | below
     reuse: bool = False
 
 
@@ -90,7 +91,6 @@ class PositionParams:
     gap_max: float
     top_margin: float
     side_margin: float
-    x_deviation: float
     reuse_bonus: float
     max_candidates: int
     history_cap: int
@@ -108,7 +108,6 @@ class PositionParams:
             gap_max=float(getattr(cfg, "positioning_gap_max", 80.0)),
             top_margin=float(getattr(cfg, "positioning_top_margin", 24.0)),
             side_margin=float(getattr(cfg, "positioning_side_margin", 48.0)),
-            x_deviation=float(getattr(cfg, "positioning_x_deviation", 180.0)),
             reuse_bonus=float(getattr(cfg, "positioning_reuse_bonus", 0.3)),
             max_candidates=int(getattr(cfg, "positioning_max_candidates", 6)),
             history_cap=int(getattr(cfg, "positioning_history_cap", 8)),
@@ -119,16 +118,16 @@ class PositionParams:
 
 
 class PositionHistory:
-    """记录已使用过的锚点，供后续字幕优先复用。"""
+    """记录已使用过的纵向锚点，供后续字幕优先复用（横坐标固定为样式默认值）。"""
 
     def __init__(self, quantize: float = 8.0):
         self.quantize = float(quantize)
-        self._counts: dict[tuple[int, int], int] = {}
-        self._order: list[tuple[int, int]] = []
+        self._counts: dict[tuple[int], int] = {}
+        self._order: list[tuple[int]] = []
 
-    def _key(self, x: float, y: float) -> tuple[int, int]:
+    def _key(self, x: float, y: float) -> tuple[int]:
         q = self.quantize
-        return (int(round(x / q) * q), int(round(y / q) * q))
+        return (int(round(y / q) * q),)
 
     def add(self, x: float, y: float) -> None:
         key = self._key(x, y)
@@ -136,8 +135,10 @@ class PositionHistory:
             self._order.append(key)
         self._counts[key] = self._counts.get(key, 0) + 1
 
-    def top(self, n: int) -> list[tuple[int, int]]:
-        return sorted(self._order, key=lambda k: (-self._counts[k], self._order.index(k)))[:n]
+    def top(self, n: int) -> list[float]:
+        """返回最常复用的纵向锚点（升序去重后的值）。"""
+        ordered = sorted(self._order, key=lambda k: (-self._counts[k], self._order.index(k)))[:n]
+        return [float(k[0]) for k in ordered]
 
 
 def _read_json(path: Path):
@@ -293,7 +294,11 @@ def map_box_to_playres(box: BBox, ocr_w: int, ocr_h: int, playres_x: int, playre
 
 
 def style_default_anchor(style, playres_x: int, playres_y: int) -> tuple[float, float]:
-    """根据 Style 的 Alignment/MarginV 估算默认锚点。"""
+    """根据 Style 的 Alignment/MarginV 估算默认锚点。
+
+    横坐标统一取画面水平居中（即字幕样式的默认横坐标），不再根据原字幕的
+    OCR 包围盒识别横坐标；纵向坐标仍按对齐方式与 MarginV 计算。
+    """
     x = playres_x / 2.0
     al = int(getattr(style, "alignment", 2) or 2)
     margin_v = float(getattr(style, "margin_v", 0) or 0)
@@ -323,9 +328,12 @@ def generate_candidates(
     history: PositionHistory,
     params: PositionParams,
 ) -> list[Candidate]:
-    """按需求生成候选锚点（使用 ``\\an2``，即锚点为译文底边中心）。"""
+    """按需求生成候选锚点（使用 ``\\an2``，即锚点为译文底边中心）。
+
+    所有候选的横坐标固定为字幕样式的默认横坐标，仅纵向位置不同。
+    """
     est_w, est_h = estimate_text_size(text, style)
-    cx = source.cx
+    x = default_anchor[0]
     top = source.y1
     out: list[Candidate] = []
 
@@ -334,31 +342,25 @@ def generate_candidates(
         if g not in gaps:
             gaps.append(g)
     for gap in gaps:
-        c = Candidate(cx, top - gap, "ideal", False)
+        c = Candidate(x, top - gap, "ideal", False)
         if _on_screen(c, est_w, est_h, params):
             out.append(c)
 
-    # 原字幕横坐标偏离中心较多时，补一个居中候选
-    if abs(cx - default_anchor[0]) > params.x_deviation:
-        c = Candidate(default_anchor[0], top - params.gap_default, "recenter", False)
-        if _on_screen(c, est_w, est_h, params):
-            out.append(c)
-
-    # 优先复用历史锚点：必须仍在原字幕上方且不越界
-    for hx, hy in history.top(params.history_cap):
+    # 优先复用历史锚点：横坐标保持样式默认值，只复用纵向位置，且必须仍在原字幕上方且不越界
+    for hy in history.top(params.history_cap):
         if hy > top - params.gap_min:
             continue
-        c = Candidate(float(hx), float(hy), "reuse", True)
+        c = Candidate(x, float(hy), "reuse", True)
         if _on_screen(c, est_w, est_h, params):
             out.append(c)
 
     # 上方没有可用位置时，退化为放在原字幕下方
     if not out:
-        c = Candidate(cx, source.y2 + params.gap_default, "below", False)
+        c = Candidate(x, source.y2 + params.gap_default, "below", False)
         if _on_screen(c, est_w, est_h, params):
             out.append(c)
 
-    # 去重并限制数量（保持顺序：ideal 优先，recentre 其次，reuse 最后）
+    # 去重并限制数量（保持顺序：ideal 优先，reuse 最后）
     seen: set[tuple[int, int]] = set()
     unique: list[Candidate] = []
     for c in out:
@@ -791,7 +793,7 @@ class PositionEngine:
 
     def _nearest_reuse(
         self,
-        ideal_x: float,
+        default_x: float,
         ideal_y: float,
         boundary_y: float,
         est_w: float,
@@ -801,15 +803,16 @@ class PositionEngine:
     ) -> tuple[float, float] | None:
         best: tuple[float, float] | None = None
         best_d2: float | None = None
-        for hx, hy in history.top(params.history_cap):
+        for hy in history.top(params.history_cap):
             if hy > boundary_y - params.gap_min:
                 continue
-            if not _on_screen(Candidate(float(hx), float(hy), "reuse", True), est_w, est_h, params):
+            if not _on_screen(Candidate(default_x, float(hy), "reuse", True), est_w, est_h, params):
                 continue
-            d2 = (hx - ideal_x) ** 2 + (hy - ideal_y) ** 2
+            # 横坐标固定为样式默认值，复用历史位置时只比较纵向距离。
+            d2 = (hy - ideal_y) ** 2
             if best_d2 is None or d2 < best_d2:
                 best_d2 = d2
-                best = (float(hx), float(hy))
+                best = (default_x, float(hy))
         if best is not None and best_d2 is not None and best_d2 <= params.reuse_tolerance ** 2:
             return best
         return None
@@ -825,9 +828,8 @@ class PositionEngine:
         params: PositionParams,
     ) -> PlacementProposal:
         est_w, _ = estimate_text_size(text, style)
-        x = source.cx
-        if abs(x - default_anchor[0]) > params.x_deviation:
-            x = default_anchor[0]
+        # 横坐标固定使用字幕样式的默认坐标，仅识别纵向位置。
+        x = default_anchor[0]
         half_w = est_w / 2.0
         min_x = params.side_margin + half_w
         max_x = params.playres_x - params.side_margin - half_w
@@ -849,7 +851,7 @@ class PositionEngine:
         est_w, est_h = estimate_text_size(text, style)
         proposal = self._propose_binary(ev, frame_path, text, source, default_anchor, style, params)
         reused = self._nearest_reuse(
-            proposal.x, proposal.y, proposal.boundary_y, est_w, est_h, history, params
+            default_anchor[0], proposal.y, proposal.boundary_y, est_w, est_h, history, params
         )
         if reused is not None:
             return Candidate(reused[0], reused[1], "reuse", True)
@@ -957,14 +959,14 @@ class PositionEngine:
                     continue
                 est_w, est_h = estimate_text_size(text, style)
                 reused = self._nearest_reuse(
-                    proposal.x, proposal.y, proposal.boundary_y, est_w, est_h, history, params
+                    default_anchor[0], proposal.y, proposal.boundary_y, est_w, est_h, history, params
                 )
                 if reused is not None:
                     x, y = reused
                 else:
                     x, y = proposal.x, proposal.y
                 positions[ev.id] = build_position_tag(x, y)
-                history.add(x, y)
+                history.add(default_anchor[0], y)
         else:
             # 旧模式：候选生成 + LLM 打分，仍按顺序处理以便复用历史位置
             for idx, (ev, text, source, default_anchor, style) in enumerate(items, 1):
@@ -981,7 +983,7 @@ class PositionEngine:
                     continue
                 best = self._choose(ev, candidates, frame_path, text, params)
                 positions[ev.id] = build_position_tag(best.x, best.y)
-                history.add(best.x, best.y)
+                history.add(default_anchor[0], best.y)
 
                 if idx % 10 == 0 or idx == total:
                     logger.info("字幕定位进度 %d/%d", idx, total)
